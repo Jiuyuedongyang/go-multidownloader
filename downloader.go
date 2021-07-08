@@ -43,42 +43,47 @@ func (d *Downloader) multiDownload(strURL, filename string, contentLen int) erro
 	partDir := d.getPartDir(filename)
 	os.Mkdir(partDir, 0777)
 	defer os.RemoveAll(partDir)
+
 	var wg sync.WaitGroup
 	wg.Add(d.concurrency)
+
 	rangeStart := 0
+
 	for i := 0; i < d.concurrency; i++ {
 		//并发请求
 		go func(i, rangeStart int) {
 			defer wg.Done()
+
 			rangeEnd := rangeStart + partSize
 			//最后一部分，总长度不能超过ContentLength
 			if i == d.concurrency-1 {
 				rangeEnd = contentLen
 			}
 			d.downloadPartial(strURL, filename, rangeStart, rangeEnd, i)
-			rangeStart += partSize + 1
 
 		}(i, rangeStart)
-		wg.Wait()
-		d.merge(filename)
-	}
+		rangeStart += partSize + 1
 
+	}
+	wg.Wait()
+	d.merge(filename)
 	return nil
 }
 
 func (d *Downloader) merge(filename string) error {
-	distFile, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
+	destFile, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
 		return err
 	}
-	defer distFile.Close()
+
+	defer destFile.Close()
 	for i := 0; i < d.concurrency; i++ {
 		partFileName := d.getPartFilename(filename, i)
 		partFile, err := os.Open(partFileName)
 		if err != nil {
 			return err
 		}
-		io.Copy(distFile, partFile)
+		io.Copy(destFile, partFile)
 		partFile.Close()
 		os.Remove(partFileName)
 	}
@@ -87,7 +92,23 @@ func (d *Downloader) merge(filename string) error {
 
 }
 func (d *Downloader) singleDownload(strURL, filename string) error {
-	return nil
+	resp, err := http.Get(strURL)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+
+	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	buf := make([]byte, 32*1024)
+	_, err = io.CopyBuffer(io.MultiWriter(f), resp.Body, buf)
+	return err
+
 }
 
 func (d *Downloader) downloadPartial(strURL, filename string, rangeStart, rangeEnd, i int) {
@@ -124,7 +145,7 @@ func (d *Downloader) downloadPartial(strURL, filename string, rangeStart, rangeE
 
 // getPartDir 部分文件存放的目录
 func (d *Downloader) getPartDir(filename string) string {
-	return strings.SplitN(filename, ",", 2)[0]
+	return strings.SplitN(filename, ".", 2)[0]
 
 }
 
